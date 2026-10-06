@@ -122,6 +122,7 @@ private struct ServicesTab: View {
 /// Rounded search field matching the macOS settings aesthetic.
 private struct SearchField: View {
     @Binding var text: String
+    var prompt = String(localized: "Search services")
 
     var body: some View {
         HStack(spacing: 6) {
@@ -129,10 +130,10 @@ private struct SearchField: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            TextField("Search services", text: $text)
+            TextField(prompt, text: $text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
-                .accessibilityLabel("Search services")
+                .accessibilityLabel(prompt)
             if !text.isEmpty {
                 Button { text = "" } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -293,7 +294,8 @@ private struct ComponentsButton: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(count > 0 ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-            .help(count > 0 ? "Watching \(count) components" : "Watch specific components")
+            .help(count == 0 ? "Watch specific components"
+                  : count == 1 ? "Watching 1 component" : "Watching \(count) components")
             .accessibilityLabel("Choose components for \(service.name)")
             .popover(isPresented: $showing, arrowEdge: .bottom) {
                 ComponentPicker(monitor: monitor, service: service)
@@ -335,7 +337,7 @@ private struct ComponentPicker: View {
             }
             .padding(.horizontal, 14)
             .padding(.top, 11)
-            SearchField(text: $search)
+            SearchField(text: $search, prompt: String(localized: "Search components"))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
 
