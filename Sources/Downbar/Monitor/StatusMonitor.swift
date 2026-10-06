@@ -273,6 +273,15 @@ final class StatusMonitor: ObservableObject {
         persist()
     }
 
+    /// Narrows a Statuspage service to specific components (nil/empty = whole page).
+    func setComponents(_ ids: [String]?, for service: Service) {
+        guard let idx = services.firstIndex(where: { $0.id == service.id }) else { return }
+        services[idx].components = (ids?.isEmpty ?? true) ? nil : ids
+        persist()
+        let updated = services[idx]
+        Task { await refreshOne(updated) }
+    }
+
     func move(from source: IndexSet, to destination: Int) {
         services.move(fromOffsets: source, toOffset: destination)
         persist()

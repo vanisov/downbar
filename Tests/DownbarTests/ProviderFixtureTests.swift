@@ -83,6 +83,64 @@ final class ProviderFixtureTests: XCTestCase {
         XCTAssertNil(r.incidentTitle)
     }
 
+    /// Cloudflare-shaped `summary.json`: the page is in a major outage because
+    /// of far-away data centers, but the watched one is fine.
+    private static let componentSummary = """
+    {
+      "status": { "indicator": "major", "description": "Partial System Outage" },
+      "components": [
+        { "id": "na", "name": "North America", "status": "operational", "group": true },
+        { "id": "smf", "name": "Sacramento, CA, United States - (SMF)", "status": "operational", "group_id": "na" },
+        { "id": "sjc", "name": "San Jose, CA, United States - (SJC)", "status": "partial_outage", "group_id": "na" },
+        { "id": "blr", "name": "Bangalore, India - (BLR)", "status": "major_outage", "group_id": "as" }
+      ],
+      "incidents": [
+        { "name": "Bangalore offline", "status": "investigating", "components": [ { "id": "blr" } ] },
+        { "name": "San Jose packet loss", "status": "identified", "components": [ { "id": "sjc" } ] }
+      ]
+    }
+    """
+
+    func testStatuspageComponentFilterIgnoresOtherComponents() async {
+        MockURLProtocol.respond(Self.componentSummary)
+        let provider = StatuspageProvider(session: MockURLProtocol.makeSession())
+        var svc = service("https://www.cloudflarestatus.com", .statuspage)
+        svc.components = ["smf"]
+        let r = await provider.fetch(svc)
+        XCTAssertEqual(r.indicator, .none)
+        XCTAssertEqual(r.description, "All Systems Operational")
+        XCTAssertNil(r.incidentTitle)
+    }
+
+    func testStatuspageComponentFilterReportsWorstWatched() async {
+        MockURLProtocol.respond(Self.componentSummary)
+        let provider = StatuspageProvider(session: MockURLProtocol.makeSession())
+        var svc = service("https://www.cloudflarestatus.com", .statuspage)
+        svc.components = ["smf", "sjc"]
+        let r = await provider.fetch(svc)
+        XCTAssertEqual(r.indicator, .major)
+        XCTAssertEqual(r.description, "San Jose, CA, United States - (SJC): Partial Outage")
+        XCTAssertEqual(r.incidentTitle, "San Jose packet loss")
+    }
+
+    func testStatuspageComponentFilterUsesSummaryEndpoint() async {
+        nonisolated(unsafe) var path = ""
+        let data = Data(Self.componentSummary.utf8)
+        MockURLProtocol.responder = { req in path = req.url?.path ?? ""; return (data, 200) }
+        var svc = service("https://www.cloudflarestatus.com", .statuspage)
+        svc.components = ["smf"]
+        _ = await StatuspageProvider(session: MockURLProtocol.makeSession()).fetch(svc)
+        XCTAssertEqual(path, "/api/v2/summary.json")
+    }
+
+    func testStatuspageMissingComponentIsUnknown() async {
+        MockURLProtocol.respond(Self.componentSummary)
+        var svc = service("https://www.cloudflarestatus.com", .statuspage)
+        svc.components = ["gone"]
+        let r = await StatuspageProvider(session: MockURLProtocol.makeSession()).fetch(svc)
+        XCTAssertEqual(r.indicator, .unknown)
+    }
+
     func testStatuspageHTTPErrorIsUnknown() async {
         MockURLProtocol.respond("nope", status: 503)
         let provider = StatuspageProvider(session: MockURLProtocol.makeSession())
