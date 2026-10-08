@@ -277,7 +277,7 @@ private struct CustomRow: View {
 /// components (e.g. the Cloudflare data center your users hit). Filled while a
 /// filter is active.
 private struct ComponentsButton: View {
-    @ObservedObject var monitor: StatusMonitor
+    let monitor: StatusMonitor
     let service: Service
     @State private var showing = false
 
@@ -307,9 +307,13 @@ private struct ComponentsButton: View {
 /// Searchable checklist of a Statuspage's components, grouped as the page
 /// groups them. An empty selection means the whole page.
 private struct ComponentPicker: View {
-    @ObservedObject var monitor: StatusMonitor
+    /// Plain `let`: the picker only writes to the monitor. Observing it would
+    /// re-render every row each time a poll publishes new results.
+    let monitor: StatusMonitor
     let service: Service
     @State private var all: [StatuspageProvider.Component]?
+    /// `sections(all)` cached; recomputed only when the list loads or the search changes.
+    @State private var shown: [Section] = []
     @State private var error: String?
     @State private var selected: Set<String>
     @State private var search = ""
@@ -343,10 +347,10 @@ private struct ComponentPicker: View {
 
             Divider()
 
-            if let all {
+            if all != nil {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(sections(all), id: \.title) { section in
+                        ForEach(shown) { section in
                             if !section.title.isEmpty {
                                 Text(section.title)
                                     .font(.system(size: 11, weight: .semibold))
@@ -377,24 +381,36 @@ private struct ComponentPicker: View {
             }
         }
         .frame(width: 320, height: 420)
+        .onChange(of: search) {
+            if let all { shown = sections(all) }
+        }
         .task {
             do {
-                all = try await StatuspageProvider.fetchComponents(service.url)
+                let loaded = try await StatuspageProvider.fetchComponents(service.url)
+                all = loaded
+                shown = sections(loaded)
             } catch {
                 self.error = error.localizedDescription
             }
         }
     }
 
+    /// Keyed by group ID, since two groups can share a name.
+    struct Section: Identifiable {
+        let id: String
+        let title: String
+        let items: [StatuspageProvider.Component]
+    }
+
     /// Top-level components first (untitled), then each group's children
     /// under the group's name, filtered by the search text.
-    private func sections(_ all: [StatuspageProvider.Component]) -> [(title: String, items: [StatuspageProvider.Component])] {
+    private func sections(_ all: [StatuspageProvider.Component]) -> [Section] {
         let q = search.lowercased()
         let matches = all.filter { $0.group != true && (q.isEmpty || $0.name.lowercased().contains(q)) }
         let groups = all.filter { $0.group == true }
-        let top = matches.filter { $0.groupID == nil }
-        return [("", top)].filter { !$0.items.isEmpty }
-            + groups.map { g in (g.name, matches.filter { $0.groupID == g.id }) }.filter { !$0.items.isEmpty }
+        let top = Section(id: "", title: "", items: matches.filter { $0.groupID == nil })
+        return ([top] + groups.map { g in Section(id: g.id, title: g.name, items: matches.filter { $0.groupID == g.id }) })
+            .filter { !$0.items.isEmpty }
     }
 
     private func toggle(_ id: String) {

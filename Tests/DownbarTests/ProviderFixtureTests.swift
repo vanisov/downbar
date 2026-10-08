@@ -141,6 +141,51 @@ final class ProviderFixtureTests: XCTestCase {
         XCTAssertEqual(r.indicator, .unknown)
     }
 
+    func testStatuspagePartlyMissingComponentsAreUnknown() async {
+        MockURLProtocol.respond(Self.componentSummary)
+        var svc = service("https://www.cloudflarestatus.com", .statuspage)
+        svc.components = ["smf", "gone"]
+        let r = await StatuspageProvider(session: MockURLProtocol.makeSession()).fetch(svc)
+        XCTAssertEqual(r.indicator, .unknown)
+        XCTAssertEqual(r.description, "1 of 2 selected components not found")
+    }
+
+    func testStatuspageOutageWinsOverMissingComponent() async {
+        MockURLProtocol.respond(Self.componentSummary)
+        var svc = service("https://www.cloudflarestatus.com", .statuspage)
+        svc.components = ["sjc", "gone"]
+        let r = await StatuspageProvider(session: MockURLProtocol.makeSession()).fetch(svc)
+        XCTAssertEqual(r.indicator, .major)
+    }
+
+    func testStatuspageUnrecognizedComponentStatusIsNotHidden() async {
+        MockURLProtocol.respond("""
+        {
+          "status": { "indicator": "none", "description": "All Systems Operational" },
+          "components": [
+            { "id": "a", "name": "A", "status": "operational" },
+            { "id": "b", "name": "B", "status": "some_new_status" }
+          ]
+        }
+        """)
+        var svc = service("https://www.cloudflarestatus.com", .statuspage)
+        svc.components = ["a", "b"]
+        let r = await StatuspageProvider(session: MockURLProtocol.makeSession()).fetch(svc)
+        XCTAssertEqual(r.indicator, .unknown)
+    }
+
+    func testStatuspageFetchComponentsReportsHTTPStatus() async {
+        MockURLProtocol.respond("<html>Not Found</html>", status: 404)
+        do {
+            _ = try await StatuspageProvider.fetchComponents(
+                URL(string: "https://www.cloudflarestatus.com")!,
+                session: MockURLProtocol.makeSession())
+            XCTFail("expected an error")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "HTTP 404")
+        }
+    }
+
     func testStatuspageHTTPErrorIsUnknown() async {
         MockURLProtocol.respond("nope", status: 503)
         let provider = StatuspageProvider(session: MockURLProtocol.makeSession())

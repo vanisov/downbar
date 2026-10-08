@@ -93,11 +93,19 @@ struct StatuspageProvider: StatusProvider {
     /// Worst status among the selected components; the description names the
     /// worst one so the row says *where* the problem is.
     private func componentResult(_ service: Service, _ payload: Payload, _ selected: Set<String>) -> ServiceStatusResult {
-        let watched = (payload.components ?? []).filter { selected.contains($0.id) }
-        guard let worst = watched.max(by: { $0.indicator < $1.indicator }) else {
+        // Components we can actually rank. A selected ID that left the page, or
+        // a status we don't recognize, is unaccounted for.
+        let known = (payload.components ?? []).filter { selected.contains($0.id) && $0.indicator != .unknown }
+        guard let worst = known.max(by: { $0.indicator < $1.indicator }) else {
             return unknown(service, "Selected components not found")
         }
         let indicator = worst.indicator
+        // A real problem on a known component still wins. But "operational"
+        // would be a lie while some watched components can't be read.
+        let unaccounted = selected.count - known.count
+        if indicator == .none && unaccounted > 0 {
+            return unknown(service, "\(unaccounted) of \(selected.count) selected components not found")
+        }
         let description = indicator == .none
             ? Indicator.none.defaultDescription
             : "\(worst.name): \(indicator.defaultDescription)"
@@ -114,7 +122,10 @@ struct StatuspageProvider: StatusProvider {
         guard let endpoint = statusEndpoint(for: pageURL, path: "/api/v2/summary.json") else {
             throw URLError(.badURL)
         }
-        let (data, _) = try await session.data(from: endpoint)
+        let (data, response) = try await session.data(from: endpoint)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw URLError(.badServerResponse, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
+        }
         return try JSONDecoder().decode(Payload.self, from: data).components ?? []
     }
 
